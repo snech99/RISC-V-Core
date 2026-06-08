@@ -1,3 +1,158 @@
-# RISC-V-Core
-## Change Branch to dev for the Verilog and C Code!
-## The FPGA Branch contains a full Vivado project with the rv32im Core, AXILite, Timer and UART
+# RISC-V 5-Stage Pipelined Processor Core
+
+This repository contains the Verilog RTL implementation of a 32-bit RISC-V processor core. The design features a classic 5-stage pipeline (Instruction Fetch, Decode, Execute, Memory Access, and Writeback) and includes robust mechanisms for hazard detection, pipeline stalling, and data forwarding.
+
+## 📑 Table of Contents
+- [Architecture & Module Interconnection](#architecture--module-interconnection)
+  - [1. Central Integration & Top-Level](#1-central-integration--top-level)
+  - [2. Instruction Fetch (IF)](#2-instruction-fetch-if)
+  - [3. Instruction Decode (ID)](#3-instruction-decode-id)
+  - [4. Execute (EX)](#4-execute-ex)
+  - [5. Memory & Writeback (MEM/WB)](#5-memory--writeback-memwb)
+- [Deep Dive: The Datapath (`Datapath.v`)](#deep-dive-the-datapath-datapathv)
+   - [Key Responsibilities of the Datapath:](#key-responsibilities-of-the-datapath)
+   - [Pipeline Hazards & Resolution](#pipeline-hazards--resolution)
+   - [RISC-V Datapath Signals Overview](#risc-v-datapath-signals-overview)
+- [Software Compilation (C to .mem)](#software-compilation-c-to-mem)
+  - [Example Test Program (`main.c`)](#example-test-program-mainc)
+  - [Standard Output & Memory-Mapped I/O](#standard-output--memory-mapped-io)
+  - [Compiling the Code](#compiling-the-code)
+- [Automated Hardware Simulation (Makefile)](#automated-hardware-simulation-makefile)
+  - [Installation of Required Tools](#installation-of-required-tools)
+  - [Available Make Commands](#available-make-commands)
+
+## Architecture & Module Interconnection
+
+The core is highly modular. The components are grouped logically by the pipeline stage they belong to, and everything is wired together by the central Datapath.
+
+### 1. Central Integration & Top-Level
+* **`Datapath.v`**: The central backbone of the processor (see detailed explanation below).
+* **`Processor_tb.v`**: The main testbench. It instantiates the `Datapath`, generates the clock (`clk`), and dumps the simulation data into a `RISCV.vcd` file for waveform analysis (e.g., using GTKWave).
+
+### 2. Instruction Fetch (IF)
+* **`ProgramCounter.v` (PC)**: A synchronous register that holds the memory address of the current instruction. It can be frozen by a stall signal.
+* **`InstructionMemory.v` (IMEM)**: A read-only memory module that fetches the 32-bit instruction based on the PC. It is initialized via a `.mem` file.
+
+### 3. Instruction Decode (ID)
+* **`ControlUnit.v` (CU)**: The brain of the decode stage. It reads the `opcode` and `funct3` fields of the instruction and generates all necessary control signals (e.g., `MemRW`, `ALUSel`, `RegWEn`) for the subsequent pipeline stages.
+* **`RegisterFile.v` (RF)**: The 32x32-bit general-purpose register file. It provides two asynchronous read ports for the ID stage and one synchronous write port for the WB stage. Register `x0` is hardwired to zero.
+* **`ImmGen.v`**: Extracts and sign-extends the immediate values from the instruction based on the instruction type (I, S, B, J, U).
+
+### 4. Execute (EX)
+* **`ArithmeticLogicUnit.v` (ALU)**: Performs all arithmetic (ADD, SUB) and logical (AND, OR, Shifts) operations.
+* **`BranchComp.v`**: Compares two register values (`rs1` and `rs2`) to evaluate branch conditions (equal, less than). It handles both signed and unsigned comparisons.
+* **`ForwardingUnit.v`**: Detects Data Hazards. If an instruction in the EX stage needs a register value that is currently being computed in the MEM or WB stage, this unit overrides the ALU inputs with the newest data to prevent reading stale values.
+
+### 5. Memory & Writeback (MEM/WB)
+* **`DataMemory.v` (DMEM)**: The main RAM. It handles reading and writing data (Bytes, Halfwords, Words) based on the control signals. Initialized via a `.mem` file.
+* **Writeback (Internal to Datapath)**: A multiplexer selection (`WBSel`) at the end of the Datapath decides whether the ALU result, Memory data, or PC+4 is written back into the Register File.
+
+---
+
+## Deep Dive: The Datapath (`Datapath.v`)
+
+The `Datapath.v` module is the most critical file in this repository. It is not a functional block itself, but rather the structural map that connects all the modules listed above and manages the flow of data across the pipeline.
+
+### Key Responsibilities of the Datapath:
+
+* **Pipeline Registers:** Between every stage, the Datapath defines physical registers (e.g., `pc_ID`, `inst_ID`, `alu_result_MEM`). These registers capture the data and control signals at the positive edge of the clock and pass them to the next stage, enabling true parallel execution of multiple instructions.
+* **Internal Forwarding (ID Stage):** The Datapath implements a small forwarding network directly at the output of the Register File. If the Writeback (WB) stage is writing to a register at the exact same time the Decode (ID) stage is reading from it, the Datapath routes the `wdata_WB` directly to the ID outputs (`rdata1_fwd_ID`), ensuring the instruction reads the most up-to-date value.
+* **Load-Use Hazard Detection & Stalling:** If a `LOAD` instruction is in the EX stage, its data won't be available until the MEM stage. If the immediately following instruction (in ID) needs that data, the Datapath triggers a `stall`. It freezes the PC and IF/ID registers and inserts a NOP (bubble) into the ID/EX register.
+* **Branch & Jump Flushing:** When a branch is taken or a jump occurs, the instructions that have already been fetched into the IF and ID stages are incorrect. The Datapath uses the `PCSel_EX` signal to overwrite the PC with the new target address and immediately "flushes" the IF/ID and ID/EX pipeline registers by replacing them with `NOPs` (`addi x0, x0, 0`).
+
+### Pipeline Hazards & Resolution
+
+This core is designed to handle all classic pipeline hazards for a scalar, in-order 5-stage architecture:
+
+* **Data Hazards:** Handled via a robust **Forwarding Unit** that routes newly calculated data from the MEM and WB stages directly back to the EX stage. For Load-Use hazards, the datapath automatically triggers a **Stall** (freezing the PC and inserting a pipeline bubble) to wait for the memory data.
+* **Control Hazards:** Handled via **Pipeline Flushing**. If a conditional branch is taken or an unconditional jump occurs, the datapath overwrites the PC with the new target and flushes the already fetched (incorrect) instructions in the IF and ID stages by replacing them with NOPs.
+* **Structural Hazards:** Prevented structurally by utilizing a **Harvard Architecture** (physically separate Instruction and Data memories) and a Register File with independent, isolated read and write ports.
+
+### RISC-V Datapath Signals Overview
+
+| Signal Name | Width | Description |
+| :--- | :--- | :--- |
+| <td colspan="3">**Global & Control Flow**</td> |
+| `clk` | 1 bit | The central clock signal synchronizing all sequential logic (registers, PC, memory). |
+| `stall` | 1 bit | Freezes the PC and IF/ID registers while inserting a NOP bubble (used to resolve Load-Use hazards). |
+| `PCSel` | 1 bit | Program Counter Select. Set to `1` when a branch is taken or a jump occurs. Overwrites the PC and triggers a pipeline flush. |
+| `pc` | 32 bit | The Program Counter holding the address of the current instruction. |
+| `pc_next` | 32 bit | The default sequential next address (`pc + 4`). |
+| `next_pc_in`| 32 bit | The final selected address written to the PC at the next clock edge. |
+| <td colspan="3">**Instruction & Decoding**</td> |
+| `inst` | 32 bit | The 32-bit raw instruction word fetched from the Instruction Memory. |
+| `rs1_addr`, `rs2_addr` | 5 bit | The extracted source register addresses (Source 1 and Source 2). |
+| `rd_addr` | 5 bit | The extracted destination register address. |
+| `imm` | 32 bit | The sign-extended immediate value generated from the instruction by the `ImmGen` module. |
+| `rdata1`, `rdata2` | 32 bit | The raw 32-bit data values read directly from the Register File. |
+| `rdata1_fwd`, `rdata2_fwd`| 32 bit | Register read data with internal forwarding applied. Resolves ID-stage data hazards. |
+| <td colspan="3">**Execution & Forwarding**</td> |
+| `ForwardA`, `ForwardB` | 2 bit | Selectors from the `ForwardingUnit`. Route default or forwarded data to ALU inputs. |
+| `alu_a_in`, `alu_b_in` | 32 bit | The final, fully resolved 32-bit operands fed into the Arithmetic Logic Unit (ALU). |
+| `Br_erg` | 2 bit | Output from the `BranchComp` unit containing comparison flags (Less Than, Equal). |
+| `branch_taken` | 1 bit | A boolean flag indicating whether the evaluated branch condition is true. |
+| `alu_result` | 32 bit | The computed 32-bit output from the ALU. |
+| <td colspan="3">**Memory & Writeback**</td> |
+| `mem` | 32 bit | The 32-bit data read from the Data Memory during a `LOAD` instruction. |
+| `wdata` | 32 bit | The final 32-bit data written back into the Register File during the Writeback stage. |
+| <td colspan="3">**Pipelined Control Signals**</td> |
+| *(Generated in ID)* | div. | **Control signals** generated by the `ControlUnit` that travel through the pipeline registers: <br>• `RegWEn`: Enables writing to the Register File.<br>• `MemRW`: Enables writing to the Data Memory.<br>• `ALUSel`: Determines the specific ALU operation.<br>• `WBSel`: Selects the Writeback data source.<br>• `ASel`, `BSel`: Base selectors for the ALU input multiplexers.<br>• `IsJump`, `IsBranch`, `BrUn`, `StoreType`, `LoadType`: Specific execution flags. |
+## Software Compilation (C to .mem)
+
+Before simulating the processor, you need a machine code file to load into the Instruction and Data Memory. This repository includes a setup to compile standard C code into a RISC-V compatible `.mem` file using a standard RISC-V toolchain.
+
+### Example Test Program (`main.c`)
+The provided `main.c` contains a simple algorithm to calculate and print the first 14 numbers of the Fibonacci sequence. Because this core runs "bare-metal" without an operating system, the code cannot use standard C libraries like `<stdio.h>`. Instead, it relies entirely on custom hardware-specific functions (`print_number`, `print_char`). This makes it an excellent benchmark to verify that loops, arithmetic operations, and Memory-Mapped I/O are functioning correctly on the hardware pipeline.
+
+### Standard Output & Memory-Mapped I/O
+The custom I/O functions provided in `riscv_gh.h` and `riscv_gh.c` rely on **Memory-Mapped I/O**. Writing a character to the specific memory address `0x4000` (`#define PRINTER (*(volatile unsigned char*) 0x4000)`) will not store the data in RAM. Instead, it triggers a special `$write` command in the Verilog `DataMemory` module, which intercepts the data and prints the character directly to the simulation console.
+
+### Compiling the Code
+A `Makefile` is provided in the software directory to automate this process. It requires a RISC-V toolchain (e.g., `riscv64-elf-gcc`). 
+
+To compile your C program (`main.c`) and generate the memory file, run:
+```bash
+make
+``` 
+
+This process links the C code with a boot code (start.S), strips it down to a raw binary, and uses hexdump to format it into `test_program_code_hex.mem`.
+
+
+## Automated Hardware Simulation (Makefile)
+
+To simplify the hardware simulation process, a `Makefile` is provided in the root directory. It automatically locates all Verilog (`.v`) files in the current directory and its subdirectories, handling compilation, execution, and waveform viewing.
+
+### Prerequisites
+Make sure you have **Icarus Verilog** (`iverilog`, `vvp`) and **GTKWave** installed on your system.
+### Installation of Required Tools
+
+To compile the Verilog code and view the simulation waveforms, you will need **Icarus Verilog** (`iverilog`) and **GTKWave**. You also need `make` to use the provided Makefile.
+
+**For Ubuntu / Debian-based systems:**
+```bash
+sudo apt update
+sudo apt install iverilog gtkwave make
+```
+
+**For Arch Linux systems:**
+```bash
+sudo pacman -S iverilog gtkwave make
+```
+
+
+
+### Available Make Commands
+
+* **`make`** or **`make compile`**: 
+  Finds all `.v` files and compiles them into a single executable named `compiled.vvp`.
+* **`make run`**: 
+  Compiles the design and runs the simulation using `vvp`. This executes the testbench and generates the `RISCV.vcd` waveform file.
+* **`make show`**: 
+  The most convenient command. It compiles the code, runs the simulation, and immediately opens the resulting `.vcd` file in GTKWave for visual analysis.
+* **`make clean`**: 
+  Deletes the generated `compiled.vvp` and any `*.vcd` files to keep your workspace clean.
+
+**Quickstart:** Once your `test_program_code_hex.mem` is ready, simply open your terminal in the `/src/core` directory and type:
+`make show`
+
+This will automatically compile, simulate, print the Fibonacci sequence (`main.c`) to your console, and launch the waveform viewer in one step!
