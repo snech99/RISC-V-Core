@@ -70,6 +70,8 @@ Toolchain: `riscv32-unknown-elf-gcc` (or `riscv64-...` with `-march=rv32im -mabi
 > **Gotcha:** reading `0xDEC0DEE3` back from a peripheral means the address is
 > not mapped (AXI decode error) — check the base address in
 > `software/common/board.h` against the Address Editor.
+## Design image
+![Alt-Text](/docs/images/design.png "Vivado design")
 
 ## License
 

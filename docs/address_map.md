@@ -9,7 +9,7 @@ values are mirrored in `software/common/board.h`.
 | BRAM (AXI BRAM Controller) | `0x00000000` | code + data, 64 KB |
 | GPIO0 (`axi_gpio_0`) | `0x40000000` | ch1 = 16 LEDs (out), ch2 = 16 switches (in) |
 | GPIO1 (`axi_gpio_1`) | `0x40010000` | ch1 = 4 buttons (in) |
-| AXI Timer (`axi_timer_0`) | `0x________` | free-running counter (**check Address Editor**) |
+| AXI Timer (`axi_timer_0`) | `0x41C00000` | free-running counter |
 | UART (`axi_uartlite_0`) | `0x40600000` | USB-serial bridge (B18 = rx, A18 = tx) |
 
 > **Decode-error gotcha:** reading `0xDEC0DEE3` back from a peripheral means the
