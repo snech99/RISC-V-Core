@@ -1,55 +1,57 @@
-# Prerequisites
-*.d
+# =============================================================================
+# .gitignore for a Vivado FPGA project
+# Principle: sources + Tcl scripts go into Git, everything generated stays out.
+# =============================================================================
 
-# Object files
-*.o
-*.ko
-*.obj
+# ---- the entire generated Vivado project directory ----
+# The project is regenerated via scripts/create_project.tcl.
+/vivado/
+*.xpr
+*.xpr.bak
+
+# ---- Vivado run/cache/gen directories (always derived) ----
+*.cache/
+*.runs/
+*.gen/
+*.sim/
+*.hw/
+*.ip_user_files/
+*.srcs/sources_1/bd/*/ip/
+.Xil/
+
+# ---- logs / journals / temporary files ----
+*.jou
+*.log
+*.str
+*.pb
+*.rpt
+*.dcp
+vivado*.backup.jou
+vivado*.backup.log
+webtalk*.jou
+webtalk*.log
+usage_statistics_webtalk*
+
+# ---- bitstreams / hardware exports (build artifacts) ----
+*.bit
+*.bin
+*.ltx
+*.xsa
+*.mcs
+*.prm
+
+# ---- software build artifacts ----
+software/build/
 *.elf
-
-# Linker output
-*.ilk
+*.o
 *.map
-*.exp
+# .bin is already blocked above; if you DO want to keep an app binary:
+#   git add -f software/dist/xyz.bin
 
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
-*.dwo
+# ---- editor / OS ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
