@@ -15,7 +15,6 @@ A hand-built, 5-stage pipelined **RV32IM** RISC-V soft-core (base integer + M ex
 | Path | Contents |
 |------|----------|
 | `rtl/` | Core RTL sources (core/) and the BRAM (mem/) |
-| `ip/` | Packaged custom IP (core, custom_bram) |
 | `bd/` | Block design as a Tcl export (`write_bd_tcl`) |
 | `constraints/` | `basys3.xdc` (pins, clock, QSPI config) |
 | `scripts/` | `create_project.tcl`, `build.tcl` |
