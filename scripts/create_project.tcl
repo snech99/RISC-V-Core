@@ -75,18 +75,30 @@ save_bd_design
 
 # -----------------------------------------------------------------------------
 # 6) Generate the HDL wrapper and set it as top
+#    CAUTION: get_files *.bd also matches the nested sub-BDs that live INSIDE
+#    generated IP (e.g. the SmartConnect's internal bd_xxxx.bd). Feeding those
+#    to make_wrapper fails (BD 41-1031). We therefore take the real top-level
+#    block design name from current_bd_design and pick only that .bd file,
+#    explicitly skipping anything under an /ip/ path.
 # -----------------------------------------------------------------------------
-set bd_file [get_files *.bd]
+set top_bd_name [get_property NAME [current_bd_design]]
+
+set bd_file ""
+foreach f [get_files -quiet ${top_bd_name}.bd] {
+    if {[string first "/ip/" $f] == -1} { set bd_file $f; break }
+}
+if {$bd_file eq ""} {
+    error "Could not locate the top-level .bd for design '$top_bd_name'"
+}
+
 make_wrapper -files $bd_file -top
 set wrapper [glob -nocomplain \
-    [file join $proj_dir ${proj_name}.gen  sources_1 bd * hdl *_wrapper.v] \
-    [file join $proj_dir ${proj_name}.srcs sources_1 bd * hdl *_wrapper.v]]
+    [file join $proj_dir ${proj_name}.gen  sources_1 bd $top_bd_name hdl ${top_bd_name}_wrapper.v] \
+    [file join $proj_dir ${proj_name}.srcs sources_1 bd $top_bd_name hdl ${top_bd_name}_wrapper.v]]
 if {[llength $wrapper] > 0} {
     add_files -norecurse $wrapper
 }
-# top name = <bd_name>_wrapper  (adjust if needed)
-set bd_name [file rootname [file tail $bd_file]]
-set_property top ${bd_name}_wrapper [current_fileset]
+set_property top ${top_bd_name}_wrapper [current_fileset]
 
 update_compile_order -fileset sources_1
 
