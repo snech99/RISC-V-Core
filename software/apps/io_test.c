@@ -22,7 +22,7 @@ static void delay(volatile unsigned n){ while (n--) ; }
 int main(void){
     uart_puts("\r\n=== Basys3 I/O-Test ===\r\n");
     uart_puts("LEDs spiegeln die Switches.\r\n");
-    uart_puts("btnU=Lauflicht  btnL=alle an  btnR=alle aus  btnD=Status\r\n\r\n");
+    uart_puts("btnU=Lauflicht  btnL=alle an  btnR=alle aus");
 
     unsigned last_sw = 0xFFFFFFFFu;
 
@@ -34,23 +34,11 @@ int main(void){
         if      (btn & BTN_U){ for (int i = 0; i < 16; i++){ led_write(1u << i); delay(120000); } }
         else if (btn & BTN_L)  led_write(0xFFFF);
         else if (btn & BTN_R)  led_write(0x0000);
-        else                   led_write(sw);          /* Standard: Switches spiegeln */
-
-        /* Status auf Knopfdruck */
-        if (btn & BTN_D){
-            uart_puts("SW="); uart_puthex(sw);
-            uart_puts(" ("); uart_putu(sw); uart_puts(")  BTN=");
-            uart_putc((btn & BTN_U) ? 'U' : '-');
-            uart_putc((btn & BTN_L) ? 'L' : '-');
-            uart_putc((btn & BTN_R) ? 'R' : '-');
-            uart_putc((btn & BTN_D) ? 'D' : '-');
-            uart_puts("\r\n");
-            delay(300000);                              /* simple Entprellung */
-        }
 
         /* Switch-Aenderung melden */
         if (sw != last_sw){
             uart_puts("Switches: "); uart_puthex(sw); uart_puts("\r\n");
+            led_write(sw); 
             last_sw = sw;
         }
 
