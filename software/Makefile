@@ -12,7 +12,7 @@ CROSS   ?= riscv64-elf-
 CC       = $(CROSS)gcc
 OBJCOPY  = $(CROSS)objcopy
 
-CFLAGS   = -march=rv32im -mabi=ilp32 -Os -ffreestanding -nostdlib \
+CFLAGS   = -march=rv32im_zicsr -mabi=ilp32 -Os -ffreestanding -nostdlib \
            -nostartfiles -Icommon -Wall
 
 # --- app build (runs from 0x4000, returns to the bootloader on exit) ---

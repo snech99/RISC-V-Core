@@ -4,6 +4,13 @@ module Datapath (
     input wire stall_AXI,
 
     // =========================================================================
+    // Interrupt request lines (asynchronous, level-sensitive)
+    // =========================================================================
+    input  wire        irq_timer_i,     // -> MTIP (e.g. AXI timer)
+    input  wire        irq_external_i,  // -> MEIP (e.g. sensor / UART / PLIC)
+    input  wire        irq_software_i,  // -> MSIP
+
+    // =========================================================================
     // Interface: Instruction Fetch (IF) -> Geht zur AXI_FetchUnit
     // =========================================================================
     output wire [31:0] pc_IF_out,
@@ -43,12 +50,22 @@ module Datapath (
     wire        stall;
     wire        stall_EX;
 
+    // Trap redirect signals (assigned in EX, used here by the PC mux).
+    wire        trap_redirect;     // exception/interrupt -> jump to trap vector
+    wire        mret_redirect;     // MRET -> jump to mepc
+    wire        flush_EX;          // squash younger instructions on any redirect
+    wire [31:0] csr_trap_vector;   // from CSRFile
+    wire [31:0] csr_mepc;          // from CSRFile
+
     // Stalls nach außen leiten
     assign stall_out = stall;
     assign stall_EX_out = stall_EX;
 
-    // Select the next PC: either branch/jump target from EX or simply PC + 4
-    wire [31:0] next_pc_in = PCSel_EX ? alu_result_EX : pc_next_IF;
+    // Select the next PC. Priority: trap > MRET > branch/jump (PCSel) > PC+4.
+    wire [31:0] next_pc_in = trap_redirect ? csr_trap_vector :
+                             mret_redirect  ? csr_mepc        :
+                             PCSel_EX       ? alu_result_EX   :
+                                              pc_next_IF;
 
     ProgramCounter pc_inst (
         .clk(clk),
@@ -73,7 +90,7 @@ module Datapath (
             inst_ID    <= 32'h00000013;
             pc_next_ID <= 32'd0;
         end else if (!stall_AXI) begin
-            if (PCSel_EX == 1'b1) begin
+            if (flush_EX == 1'b1) begin
                 inst_ID    <= 32'h00000013;
                 pc_ID      <= 0;
                 pc_next_ID <= 0;
@@ -94,6 +111,7 @@ module Datapath (
     wire [4:0] rs2_addr_ID = inst_ID[24:20];
     wire [4:0] rd_addr_ID  = inst_ID[11:7];
     wire [2:0] funct3_ID   = inst_ID[14:12];
+    wire [11:0] csr_addr_ID = inst_ID[31:20]; // CSR address field
 
     wire [31:0] rdata1_ID;
     wire [31:0] rdata2_ID;
@@ -104,6 +122,10 @@ module Datapath (
     wire [1:0]  WBSel_ID, StoreType_ID;
     wire [2:0]  ImmSel_ID, LoadType_ID;
     wire [4:0]  ALUSel_ID;
+
+    // NEW: System / CSR control signals (Zicsr)
+    wire        IsCSR_ID, CSRUseImm_ID, IsMRET_ID, IsECALL_ID, IsEBREAK_ID;
+    wire [1:0]  CSRCmd_ID;
 
     // Writeback signals (coming from STAGE 5)
     wire [31:0] wdata_WB;
@@ -123,7 +145,13 @@ module Datapath (
         .LoadType(LoadType_ID),
         .BrUn(BrUn_ID),
         .IsJump(IsJump_ID),
-        .IsBranch(IsBranch_ID)
+        .IsBranch(IsBranch_ID),
+        .IsCSR(IsCSR_ID),
+        .CSRCmd(CSRCmd_ID),
+        .CSRUseImm(CSRUseImm_ID),
+        .IsMRET(IsMRET_ID),
+        .IsECALL(IsECALL_ID),
+        .IsEBREAK(IsEBREAK_ID)
     );
 
     RegisterFile rf_inst (
@@ -161,6 +189,18 @@ module Datapath (
     reg [2:0]  LoadType_EX=0;
     reg [4:0]  ALUSel_EX=0;
 
+    // NEW: CSR pipeline state carried into EX
+    reg        IsCSR_EX=0, CSRUseImm_EX=0;
+    reg [1:0]  CSRCmd_EX=0;
+    reg [11:0] csr_addr_EX=0;
+
+    // NEW: trap/system pipeline state carried into EX
+    reg        IsMRET_EX=0, IsECALL_EX=0, IsEBREAK_EX=0;
+
+    // NEW: marks whether EX currently holds a real instruction (not a bubble).
+    // Needed so an interrupt is only taken on a valid victim (correct mepc).
+    reg        valid_EX=0;
+
     // Load-Use Hazard Detection
     assign stall = (WBSel_EX == 2'b00) && (RegWEn_EX == 1'b1) && (rd_addr_EX != 5'd0) &&
                    ((rd_addr_EX == rs1_addr_ID) || (rd_addr_EX == rs2_addr_ID));
@@ -190,13 +230,30 @@ module Datapath (
             rs1_addr_EX <= 5'd0;
             rs2_addr_EX <= 5'd0;
             funct3_EX   <= 3'd0;
+
+            // NEW: CSR reset
+            IsCSR_EX     <= 1'b0;
+            CSRUseImm_EX <= 1'b0;
+            CSRCmd_EX    <= 2'b00;
+            csr_addr_EX  <= 12'd0;
+
+            // NEW: trap/system reset
+            IsMRET_EX    <= 1'b0;
+            IsECALL_EX   <= 1'b0;
+            IsEBREAK_EX  <= 1'b0;
+            valid_EX     <= 1'b0;
         end else if (!stall_AXI) begin
             // NORMAL OPERATION & STALL LOGIC
-            if (PCSel_EX == 1'b1 || stall == 1'b1) begin
+            if (flush_EX == 1'b1 || stall == 1'b1) begin
                 RegWEn_EX   <= 1'b0;
                 MemRW_EX    <= 1'b0;
                 IsJump_EX   <= 1'b0;
                 IsBranch_EX <= 1'b0;
+                IsCSR_EX    <= 1'b0; // NEW: do not commit a CSR write for a bubble
+                IsMRET_EX   <= 1'b0; // NEW: squashed system instr must not redirect
+                IsECALL_EX  <= 1'b0;
+                IsEBREAK_EX <= 1'b0;
+                valid_EX    <= 1'b0; // NEW: bubble -> not a valid victim
             end else if (!stall_EX) begin
                 pc_EX       <= pc_ID;
                 rdata1_EX   <= rdata1_fwd_ID;
@@ -219,6 +276,16 @@ module Datapath (
                 StoreType_EX<= StoreType_ID;
                 LoadType_EX <= LoadType_ID;
                 ALUSel_EX   <= ALUSel_ID;
+
+                IsCSR_EX     <= IsCSR_ID;
+                CSRUseImm_EX <= CSRUseImm_ID;
+                CSRCmd_EX    <= CSRCmd_ID;
+                csr_addr_EX  <= csr_addr_ID;
+
+                IsMRET_EX    <= IsMRET_ID;
+                IsECALL_EX   <= IsECALL_ID;
+                IsEBREAK_EX  <= IsEBREAK_ID;
+                valid_EX     <= 1'b1; // NEW: a real instruction now occupies EX
             end
         end
     end
@@ -232,6 +299,9 @@ module Datapath (
     reg  [4:0]  rd_addr_MEM = 0;
     reg         RegWEn_MEM  = 0;
     reg [1:0]   WBSel_MEM=0;
+    // Declared here (before wb_value_MEM uses them); written in the EX/MEM block.
+    reg [31:0]  pc_next_MEM = 0;
+    reg [31:0]  csr_rdata_MEM = 0; // old CSR value en route to WB
 
     wire [31:0] mem_MEM = mem_rdata_in; // Daten kommen von Außen (AXI Bus)
 
@@ -265,14 +335,20 @@ module Datapath (
         .ForwardB(ForwardB)
     );
 
-    wire [31:0] mem_or_alu_MEM = (WBSel_MEM == 2'b00) ? mem_MEM : alu_result_MEM;
+    // Writeback-source mux used for MEM-stage forwarding. It must mirror the WB
+    // mux so that JAL/JALR (PC+4) and CSR read values are forwarded correctly,
+    // not only load data and ALU results.
+    wire [31:0] wb_value_MEM = (WBSel_MEM == 2'b00) ? mem_MEM        :
+                               (WBSel_MEM == 2'b01) ? alu_result_MEM :
+                               (WBSel_MEM == 2'b10) ? pc_next_MEM    :
+                                                      csr_rdata_MEM;
 
     // Apply forwarding logic
-    wire [31:0] forward_a_val = (ForwardA == 2'b10) ? mem_or_alu_MEM :
+    wire [31:0] forward_a_val = (ForwardA == 2'b10) ? wb_value_MEM :
                                 (ForwardA == 2'b01) ? wdata_WB :
                                 rdata1_EX;
 
-    wire [31:0] forward_b_val = (ForwardB == 2'b10) ? mem_or_alu_MEM :
+    wire [31:0] forward_b_val = (ForwardB == 2'b10) ? wb_value_MEM :
                                 (ForwardB == 2'b01) ? wdata_WB :
                                 rdata2_EX;
 
@@ -310,6 +386,78 @@ module Datapath (
 
     wire [31:0] final_ex_result = is_div_instruction ? divider_result : alu_result_EX;
 
+    // -------------------------------------------------------------------------
+    // CSR ACCESS (executed in EX): combinational read, registered write.
+    // The write commits on the same edge the instruction advances into MEM, so
+    // a back-to-back CSR instruction one cycle later observes the new value.
+    // -------------------------------------------------------------------------
+    wire [31:0] csr_rdata_EX;          // old CSR value -> rd through writeback
+    wire [31:0] csr_wdata_EX = CSRUseImm_EX ? {27'd0, rs1_addr_EX} : forward_a_val;
+
+    // CSRRS/CSRRC with rs1 (or uimm) == 0 must not write (read-only access).
+    wire        csr_no_write = (CSRCmd_EX == 2'b10 || CSRCmd_EX == 2'b11)
+                               && (rs1_addr_EX == 5'd0);
+
+    // Commit only on the cycle the instruction actually leaves EX.
+    wire        csr_advance  = !stall_AXI && !stall_EX;
+
+    // CSRFile combinational outputs (csr_trap_vector / csr_mepc are forward-
+    // declared near the PC mux).
+    wire        csr_int_pending;
+    wire [3:0]  csr_int_cause;
+
+    // -------------------------------------------------------------------------
+    // TRAP LOGIC
+    //   Step 3a: ECALL / EBREAK raise a synchronous exception, MRET returns.
+    //   Step 3b: a pending+enabled interrupt is taken on the valid instruction
+    //            currently in EX (the "victim"): squash it, save its PC in mepc,
+    //            and re-run it after MRET.
+    // -------------------------------------------------------------------------
+    wire        is_exception_EX = IsECALL_EX | IsEBREAK_EX;
+    wire [3:0]  exc_cause       = IsEBREAK_EX ? 4'd3 : 4'd11; // breakpoint=3, ecall-from-M=11
+
+    // Take an interrupt only on a real instruction, not on ECALL/EBREAK/MRET,
+    // and only when EX actually advances (so it pulses once).
+    wire        int_take = csr_int_pending & valid_EX & !is_exception_EX
+                           & !IsMRET_EX & csr_advance;
+
+    // A CSR write must not commit if its instruction becomes an interrupt victim.
+    wire [1:0]  csr_cmd_eff  = (IsCSR_EX && !csr_no_write && csr_advance && !int_take)
+                               ? CSRCmd_EX : 2'b00;
+
+    assign trap_redirect = is_exception_EX | int_take; // -> PC = trap vector
+    assign mret_redirect = IsMRET_EX;                  // -> PC = mepc
+    assign flush_EX      = PCSel_EX | trap_redirect | mret_redirect;
+
+    // Cause / kind selection: interrupt wins (exception is gated out of int_take).
+    wire        trap_is_int   = int_take;
+    wire [3:0]  trap_cause_sel = int_take ? csr_int_cause : exc_cause;
+
+    // Pulse the CSR exactly on the cycle the instruction leaves EX (csr_advance).
+    wire        trap_fire = trap_redirect & csr_advance;
+    wire        mret_fire = mret_redirect & csr_advance;
+
+    CSRFile csr_inst (
+        .clk(clk),
+        .resetn(resetn),
+        .csr_addr(csr_addr_EX),
+        .csr_wdata(csr_wdata_EX),
+        .csr_cmd(csr_cmd_eff),
+        .csr_rdata(csr_rdata_EX),
+        .irq_timer_i(irq_timer_i),
+        .irq_external_i(irq_external_i),
+        .irq_software_i(irq_software_i),
+        .trap_valid(trap_fire),
+        .trap_is_interrupt(trap_is_int),
+        .trap_cause(trap_cause_sel),
+        .trap_pc(pc_EX),           // exception: this instr; interrupt: the victim
+        .mret_valid(mret_fire),
+        .interrupt_pending(csr_int_pending),
+        .interrupt_cause(csr_int_cause),
+        .trap_vector(csr_trap_vector),
+        .mepc_o(csr_mepc)
+    );
+
     BranchComp branch_inst(
         .rs1(forward_a_val),
         .rs2(forward_b_val),
@@ -321,7 +469,7 @@ module Datapath (
     // PIPELINE REGISTER 3: EX/MEM
     // -------------------------------------------------------------------------
     reg [31:0] rdata2_MEM  = 0;
-    reg [31:0] pc_next_MEM = 0;
+    // pc_next_MEM and csr_rdata_MEM are declared earlier (used by wb_value_MEM).
 
     reg        MemRW_MEM = 0;
     reg [1:0]  StoreType_MEM = 0;
@@ -341,6 +489,7 @@ module Datapath (
             rdata2_MEM     <= 32'd0;
             rd_addr_MEM    <= 5'd0;
             pc_next_MEM    <= 32'd0;
+            csr_rdata_MEM  <= 32'd0;
         end else if (!stall_AXI) begin
             // NORMAL OPERATION & STALL LOGIC
             if (stall_EX) begin
@@ -357,6 +506,14 @@ module Datapath (
                 WBSel_MEM      <= WBSel_EX;
                 StoreType_MEM  <= StoreType_EX;
                 LoadType_MEM   <= LoadType_EX;
+                csr_rdata_MEM  <= csr_rdata_EX;
+
+                // Interrupt victim: suppress its writeback and memory effects.
+                // mepc points at it, so it re-executes after MRET.
+                if (int_take) begin
+                    RegWEn_MEM <= 1'b0;
+                    MemRW_MEM  <= 1'b0;
+                end
             end
         end
     end
@@ -382,6 +539,7 @@ module Datapath (
     reg [31:0] alu_result_WB = 0, mem_WB = 0;
     reg [31:0] pc_next_WB = 0;
     reg [1:0]  WBSel_WB = 0;
+    reg [31:0] csr_rdata_WB = 0; // NEW
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -392,6 +550,7 @@ module Datapath (
             mem_WB        <= 32'd0;
             rd_addr_WB    <= 5'd0;
             pc_next_WB    <= 32'd0;
+            csr_rdata_WB  <= 32'd0;
         end else if (!stall_AXI) begin
             // NORMAL OPERATION (Keine Hazards mehr in dieser Stufe)
             alu_result_WB <= alu_result_MEM;
@@ -401,6 +560,7 @@ module Datapath (
 
             RegWEn_WB     <= RegWEn_MEM;
             WBSel_WB      <= WBSel_MEM;
+            csr_rdata_WB  <= csr_rdata_MEM;
         end
     end
 
@@ -409,8 +569,9 @@ module Datapath (
     // STAGE 5: WRITEBACK (WB)
     // =========================================================================
 
-    assign wdata_WB = (WBSel_WB == 2'b00) ? mem_WB :
+    assign wdata_WB = (WBSel_WB == 2'b00) ? mem_WB        :
                       (WBSel_WB == 2'b01) ? alu_result_WB :
-                      pc_next_WB;
+                      (WBSel_WB == 2'b10) ? pc_next_WB    :
+                                            csr_rdata_WB;
 
 endmodule

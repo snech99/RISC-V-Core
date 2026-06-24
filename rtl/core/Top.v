@@ -5,6 +5,13 @@ module rv32im_axi_top (
     input wire resetn,
 
     // =========================================================================
+    // Interrupt request lines (from the block design: AXI timer, sensors, ...)
+    // =========================================================================
+    input wire irq_timer_i,
+    input wire irq_external_i,
+    input wire irq_software_i,
+
+    // =========================================================================
     // AXI4-Lite Master: Instruction Fetch (Read-Only)
     // =========================================================================
     output wire [31:0] M_AXI_IF_ARADDR,
@@ -113,6 +120,11 @@ module rv32im_axi_top (
         .clk(clk),
         .resetn(resetn),
         .stall_AXI(stall_AXI),
+
+        // Interrupt request lines
+        .irq_timer_i(irq_timer_i),
+        .irq_external_i(irq_external_i),
+        .irq_software_i(irq_software_i),
 
         // IF Stage
         .pc_IF_out(pc_IF_out),
