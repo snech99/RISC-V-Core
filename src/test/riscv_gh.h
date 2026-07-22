@@ -1,3 +1,10 @@
+// =============================================================================
+// riscv_gh.h — bare-metal I/O runtime for the RV32IM core
+// -----------------------------------------------------------------------------
+// Minimal freestanding helpers (no libc). Output is produced through
+// memory-mapped I/O: writing a byte to PRINTER (address 0x4000) is intercepted
+// by the DataMemory module and printed to the simulation console.
+// =============================================================================
 #ifndef RISCV_GH_H
 #define RISCV_GH_H
 

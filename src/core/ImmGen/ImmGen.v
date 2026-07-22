@@ -1,3 +1,11 @@
+// =============================================================================
+// ImmGen — immediate generator (ID stage)
+// -----------------------------------------------------------------------------
+// Combinational. Extracts and sign-extends the immediate encoded in the
+// instruction according to the format selected by ImmSel (I, S, B, J, U).
+// B- and J-type immediates are reassembled from their scattered bit fields and
+// carry an implicit low zero bit (targets are 2-byte aligned).
+// =============================================================================
 module ImmGen (
     input [31:0] inst,
     input [2:0] ImmSel,

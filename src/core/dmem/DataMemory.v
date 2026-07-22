@@ -1,3 +1,14 @@
+// =============================================================================
+// DataMemory (DMEM) — main RAM (MEM stage)
+// -----------------------------------------------------------------------------
+// Word-addressed RAM with byte/halfword/word granularity for stores (StoreType)
+// and sign-/zero-extended byte/halfword/word loads (LoadType). Synchronous
+// write, combinational read.
+//
+// Memory-mapped I/O: a store to address 0x4000 is not written to RAM; instead
+// its low byte is emitted to the simulation console via $write, which is how
+// the C runtime's print_char() produces output.
+// =============================================================================
 module DataMemory (
     input [31:0] addr,
     input [31:0] dataW,

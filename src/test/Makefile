@@ -1,9 +1,17 @@
+# =============================================================================
+# Makefile (software) — compile C + boot code into a .mem image
+# -----------------------------------------------------------------------------
+# Builds main.elf from start.S + the C sources, strips it to a raw binary, and
+# formats it word-by-word into test_program_code_hex.mem, which both the
+# InstructionMemory and DataMemory modules load via $readmemh.
+# Target ISA is rv32im (base integer + M extension: mul/div/rem).
+# =============================================================================
 TOOLCHAIN = riscv64-elf-
 
 CC = $(TOOLCHAIN)gcc
 OBJCOPY = $(TOOLCHAIN)objcopy
 
-CFLAGS = -march=rv32i -mabi=ilp32 -O0 -ffreestanding -nostdlib -Wl,--no-warn-rwx-segments -T linker.ld -Xlinker --no-relax
+CFLAGS = -march=rv32im -mabi=ilp32 -O0 -ffreestanding -nostdlib -Wl,--no-warn-rwx-segments -T linker.ld -Xlinker --no-relax
 
 all: test_program_code_hex.mem
 
