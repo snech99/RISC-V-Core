@@ -1,3 +1,10 @@
+// =============================================================================
+// riscv_gh.c — implementation of the bare-metal I/O helpers
+// -----------------------------------------------------------------------------
+// print_char is the single primitive: it stores a byte to the memory-mapped
+// PRINTER address, which the DataMemory turns into console output. Everything
+// else (strings, decimal, hex) is built on top of it.
+// =============================================================================
 #include "riscv_gh.h"
 
 void print_char(char c) {

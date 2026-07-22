@@ -1,3 +1,10 @@
+// =============================================================================
+// RegisterFile — 32 x 32-bit general-purpose registers
+// -----------------------------------------------------------------------------
+// Two asynchronous (combinational) read ports for the ID stage and one
+// synchronous write port for the WB stage. Register x0 is hardwired to zero:
+// reads of x0 return 0 and writes to x0 are ignored.
+// =============================================================================
 module RegisterFile (
     input [31:0] wdata,
     input [4:0] rs1, 

@@ -1,3 +1,15 @@
+// =============================================================================
+// ForwardingUnit — EX-stage data-hazard resolution
+// -----------------------------------------------------------------------------
+// Combinational. Compares the source registers of the instruction in EX against
+// the destination registers of the instructions in MEM and WB and picks where
+// each ALU operand should come from:
+//     2'b10 = forward from MEM stage   (most recent, highest priority)
+//     2'b01 = forward from WB stage
+//     2'b00 = use the value read from the register file (no hazard)
+// x0 is never forwarded. Load-use hazards cannot be forwarded and are handled
+// by the stall logic in the Datapath instead.
+// =============================================================================
 module ForwardingUnit (
     input [4:0] rs1_addr_EX,
     input [4:0] rs2_addr_EX, 

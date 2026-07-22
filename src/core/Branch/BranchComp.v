@@ -1,3 +1,12 @@
+// =============================================================================
+// BranchComp — branch comparator (EX stage)
+// -----------------------------------------------------------------------------
+// Combinational. Compares rs1 and rs2 and reports two flags in Br_erg:
+//     Br_erg[0] = equal (rs1 == rs2)
+//     Br_erg[1] = less-than; signed when BrUn=0, unsigned when BrUn=1
+// The Datapath turns these flags into the actual taken/not-taken decision per
+// the branch funct3 (BEQ/BNE/BLT/BGE/BLTU/BGEU).
+// =============================================================================
 module BranchComp (
     input  [31:0] rs1,
     input  [31:0] rs2,
